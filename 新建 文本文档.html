@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, shrink-to-fit=yes">
+  <title>❤️ 爱心弹窗 · 手机版</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      background: #0a0f1e;
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      font-family: "PingFang SC", "Microsoft YaHei", "Helvetica Neue", system-ui, sans-serif;
+      overflow-x: hidden;
+      overflow-y: auto;
+      padding: 10px;
+      margin: 0;
+      position: relative;
+    }
+    /* 主画布：用于绘制爱心动画（作为氛围背景或主视觉） */
+    #heartCanvas {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 1;
+      pointer-events: none; /* 让点击穿透到弹窗层 */
+    }
+    /* 弹窗容器：所有可爱卡片都在这里 */
+    .popup-container {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 10;
+      pointer-events: none; /* 容器本身不拦截事件，子元素需要恢复 */
+    }
+    /* 单个提示卡片 */
+    .love-popup {
+      position: absolute;
+      background: #FFB6C1;
+      color: #2e1e2b;
+      font-weight: bold;
+      font-size: 16px;
+      padding: 12px 18px;
+      border-radius: 32px;
+      box-shadow: 0 12px 28px rgba(0,0,0,0.25), 0 4px 10px rgba(255,105,180,0.5);
+      backdrop-filter: blur(4px);
+      background: rgba(255, 245, 240, 0.9);
+      border: 2px solid rgba(255, 255, 255, 0.8);
+      text-align: center;
+      white-space: nowrap;
+      pointer-events: auto; /* 允许点击卡片本身（但不需要交互） */
+      animation: popIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+      transform-origin: center;
+      will-change: transform, opacity;
+      letter-spacing: 0.5px;
+      /* 防止文字选中 */
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    /* 每一张卡片背景色通过js动态设置，这里只定义动画 */
+    @keyframes popIn {
+      0% {
+        opacity: 0;
+        transform: scale(0.2) translateY(20px);
+      }
+      100% {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+      }
+    }
+    /* 中央提示按钮或引导文字（可选） */
+    .start-hint {
+      position: fixed;
+      bottom: 30px;
+      left: 0;
+      width: 100%;
+      text-align: center;
+      z-index: 20;
+      color: rgba(255,255,255,0.85);
+      font-size: 16px;
+      font-weight: 500;
+      text-shadow: 0 2px 8px black;
+      letter-spacing: 2px;
+      background: linear-gradient(90deg, transparent, rgba(255,192,203,0.3), transparent);
+      padding: 12px 0;
+      pointer-events: none;
+    }
+    .start-hint span {
+      background: rgba(0,0,0,0.4);
+      padding: 8px 24px;
+      border-radius: 40px;
+      backdrop-filter: blur(10px);
+    }
+    /* 移动端优化：小屏字体略微缩小 */
+    @media (max-width: 400px) {
+      .love-popup {
+        font-size: 14px;
+        padding: 8px 14px;
+        border-radius: 28px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <!-- 爱心背景画布 (可选，绘制飘浮爱心增强氛围) -->
+  <canvas id="heartCanvas"></canvas>
+  
+  <!-- 弹窗动态添加到此容器 -->
+  <div class="popup-container" id="popupContainer"></div>
+  
+  <div class="start-hint" id="hintText">
+    <span>✨ 满屏小心心送给你 ✨</span>
+  </div>
+
+  <script>
+    (function() {
+      // ---------------------- 配置区（与Python逻辑对应） ----------------------
+      const TIPS = [
+        "我想你了", "别熬夜哦", "要开心呀", "我爱你", "早点休息",
+        "记得吃饭", "多喝热水", "你最棒啦", "晚安好梦", "I LOVE YOU",
+        "照顾好自己", "想见到你", "一直在等你", "别太累了", "天冷了多穿衣服"
+      ];
+      
+      // 明亮柔和的背景色数组 (与Python基本一致)
+      const BG_COLORS = [
+        "#FFB6C1", "#FFA07A", "#FFD700", "#98FB98", "#87CEFA",
+        "#DDA0DD", "#F0E68C", "#E6E6FA", "#F5DEB3", "#FFE4E1"
+      ];
+      
+      // 爱心参数 (适配手机屏幕)
+      const HEART_SCALE = 18;        // 爱心大小系数，手机屏幕较小调小一点
+      const HEART_OFFSET_Y = -30;    // 整体向上偏移像素 (负值向上)
+      const NUM_WINDOWS = 200;       // 爱心弹窗数量 (与Python一致200个)
+      
+      // 弹窗卡片尺寸 (动态计算，但设置基础宽度)
+      const POPUP_BASE_WIDTH = 130;  // 宽度大约130px，实际根据文字长度自适应
+      const POPUP_BASE_HEIGHT = 50;  // 高度大约50px
+      
+      // 获取屏幕尺寸
+      const screenWidth = window.innerWidth;
+      const screenHeight = window.innerHeight;
+      
+      // 存储所有当前显示的弹窗元素
+      let activePopups = [];
+      
+      // 容器引用
+      const container = document.getElementById('popupContainer');
+      const canvas = document.getElementById('heartCanvas');
+      const ctx = canvas.getContext('2d');
+      
+      // 画布尺寸适配
+      function resizeCanvas() {
+        canvas.width = screenWidth;
+        canvas.height = screenHeight;
+      }
+      resizeCanvas();
+      window.addEventListener('resize', () => {
+        // 为避免频繁重绘，简单重新设置尺寸 (但弹窗位置基于当时屏幕，不重新生成)
+        // 实际体验中，生成时屏幕尺寸固定，后续resize可能偏移，但可接受。
+        // 这里仅更新画布大小。
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+      });
+      
+      // ---------------------- 爱心轨迹计算 (与Python算法一致) ----------------------
+      function generateHeartPoints(numPoints = NUM_WINDOWS) {
+        const points = [];
+        const centerX = screenWidth / 2;
+        const centerY = screenHeight / 2;
+        
+        for (let i = 0; i < numPoints; i++) {
+          // t 从 0 到 2PI 均匀分布
+          const t = (i / numPoints) * 2 * Math.PI;
+          
+          // 经典爱心参数方程
+          const xRaw = 16 * Math.pow(Math.sin(t), 3);
+          const yRaw = 13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t);
+          
+          // 映射到屏幕坐标，注意y轴方向：Python中y向上减小，这里屏幕y向下为正，所以用减号
+          let sx = centerX + xRaw * HEART_SCALE;
+          let sy = centerY - yRaw * HEART_SCALE + HEART_OFFSET_Y;
+          
+          // 边界保护，确保弹窗不超出屏幕 (考虑弹窗自身宽高)
+          const halfWidth = POPUP_BASE_WIDTH / 2;
+          const halfHeight = POPUP_BASE_HEIGHT / 2;
+          sx = Math.max(halfWidth, Math.min(sx, screenWidth - halfWidth));
+          sy = Math.max(halfHeight, Math.min(sy, screenHeight - halfHeight));
+          
+          points.push({ x: sx, y: sy });
+        }
+        return points;
+      }
+      
+      // ---------------------- 创建单个弹窗 (DOM元素) ----------------------
+      function createPopup(x, y, tipText = null, bgColor = null) {
+        // 随机选取文案和背景色
+        const text = tipText || TIPS[Math.floor(Math.random() * TIPS.length)];
+        const color = bgColor || BG_COLORS[Math.floor(Math.random() * BG_COLORS.length)];
+        
+        // 创建卡片div
+        const popup = document.createElement('div');
+        popup.className = 'love-popup';
+        popup.textContent = text;
+        
+        // 设置背景色 (保留一点透明度叠加，更柔和)
+        popup.style.backgroundColor = color;
+        // 根据背景色调整文字颜色 (深色背景用白色，浅色保留深色)
+        if (color === "#FFB6C1" || color === "#FFA07A" || color === "#FFD700" || 
+            color === "#F0E68C" || color === "#F5DEB3" || color === "#FFE4E1" ||
+            color === "#98FB98" || color === "#87CEFA" || color === "#DDA0DD" || color === "#E6E6FA") {
+          popup.style.color = "#2e1e2b"; // 深色文字
+        } else {
+          popup.style.color = "#1a1a2e";
+        }
+        
+        // 定位：使用绝对位置，中心对齐
+        // 由于卡片宽度不定，使用 transform 居中定位
+        popup.style.left = x + 'px';
+        popup.style.top = y + 'px';
+        popup.style.transform = 'translate(-50%, -50%)';
+        
+        // 添加到容器
+        container.appendChild(popup);
+        
+        // 存储引用
+        activePopups.push(popup);
+        
+        return popup;
+      }
+      
+      // 清除所有弹窗
+      function clearAllPopups() {
+        activePopups.forEach(popup => {
+          if (popup && popup.parentNode) {
+            popup.remove();
+          }
+        });
+        activePopups = [];
+      }
+      
+      // ---------------------- 背景画布绘制：飘浮小爱心 (增强氛围) ----------------------
+      let animationFrameId = null;
+      let floatingHearts = [];
+      
+      function initFloatingHearts(count = 60) {
+        floatingHearts = [];
+        for (let i = 0; i < count; i++) {
+          floatingHearts.push({
+            x: Math.random() * screenWidth,
+            y: Math.random() * screenHeight,
+            size: Math.random() * 12 + 4,
+            speedY: Math.random() * 0.8 + 0.3,
+            speedX: Math.random() * 0.4 - 0.2,
+            opacity: Math.random() * 0.5 + 0.3,
+            color: BG_COLORS[Math.floor(Math.random() * BG_COLORS.length)],
+          });
+        }
+      }
+      
+      function drawFloatingHearts() {
+        if (!ctx || canvas.width === 0) return;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        for (let h of floatingHearts) {
+          ctx.save();
+          ctx.globalAlpha = h.opacity;
+          ctx.fillStyle = h.color;
+          ctx.font = `${h.size}px "Segoe UI Emoji", "Apple Color Emoji", system-ui`;
+          ctx.fillText('❤️', h.x, h.y);
+          ctx.restore();
+          
+          // 移动位置
+          h.y -= h.speedY;
+          h.x += h.speedX;
+          
+          // 边界循环
+          if (h.y < -20) {
+            h.y = screenHeight + 10;
+            h.x = Math.random() * screenWidth;
+          }
+          if (h.x < -20) h.x = screenWidth + 10;
+          if (h.x > screenWidth + 20) h.x = -10;
+        }
+        
+        animationFrameId = requestAnimationFrame(drawFloatingHearts);
+      }
+      
+      // 启动背景动画
+      initFloatingHearts(70);
+      drawFloatingHearts();
+      
+      // ---------------------- 主流程控制 ----------------------
+      async function runLoveSequence() {
+        // 确保开始时清除任何残留弹窗
+        clearAllPopups();
+        
+        // 1. 生成爱心形状弹窗 (200个)
+        const heartPoints = generateHeartPoints(NUM_WINDOWS);
+        
+        // 逐个创建弹窗，带一点延迟模仿逐个弹出效果
+        for (let i = 0; i < heartPoints.length; i++) {
+          const { x, y } = heartPoints[i];
+          // 最后一个弹窗使用专属文案
+          const tip = (i === NUM_WINDOWS - 1) ? "我超级喜欢你！❤️" : null;
+          createPopup(x, y, tip);
+          
+          // 动态延迟，让生成更流畅 (大约0.015秒对应15ms)
+          if (i % 3 === 0) {
+            await new Promise(resolve => setTimeout(resolve, 12));
+          }
+        }
+        
+        // 等待3秒欣赏爱心
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        
+        // 2. 清除爱心弹窗
+        clearAllPopups();
+        
+        // 短暂停顿
+        await new Promise(resolve => setTimeout(resolve, 200));
+        
+        // 3. 随机弹出100个温馨提示弹窗 (与Python逻辑一致)
+        for (let i = 0; i < 100; i++) {
+          const rx = Math.random() * (screenWidth - POPUP_BASE_WIDTH) + POPUP_BASE_WIDTH/2;
+          const ry = Math.random() * (screenHeight - POPUP_BASE_HEIGHT) + POPUP_BASE_HEIGHT/2;
+          createPopup(rx, ry);
+          
+          // 每几个弹窗延迟一下，制造活泼感
+          if (i % 5 === 0) {
+            await new Promise(resolve => setTimeout(resolve, 40));
+          }
+        }
+        
+        // 等待5秒后关闭所有窗口
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        clearAllPopups();
+        
+        // 最后显示提示文字 (已存在hint，无需额外操作)
+        console.log('爱心弹窗序列完成！');
+      }
+      
+      // 页面加载后自动开始 (并且可以点击屏幕重新触发？为了体验，设置自动开始)
+      window.addEventListener('load', () => {
+        // 稍微延迟一点，让布局稳定
+        setTimeout(() => {
+          runLoveSequence().catch(err => console.error(err));
+        }, 300);
+        
+        // 添加点击屏幕重新播放的功能 (隐藏提示：双击或点击任意位置重新开始)
+        document.body.addEventListener('click', function restartHandler() {
+          // 为避免频繁触发，移除旧监听并重新运行
+          // 但为了安全，先清除现有弹窗并重新开始
+          clearAllPopups();
+          // 取消现有定时器？ runLoveSequence 是异步，直接重新调用。
+          runLoveSequence().catch(err => console.error(err));
+        }, { once: false }); // 允许重复点击重播
+        
+        // 也可通过提示文字提示用户
+        const hint = document.getElementById('hintText');
+        if (hint) {
+          hint.innerHTML = '<span>💖 点击屏幕重新播放爱心 💖</span>';
+        }
+      });
+      
+      // 清理动画帧 (页面关闭时自动清理，但良好实践)
+      window.addEventListener('beforeunload', () => {
+        if (animationFrameId) {
+          cancelAnimationFrame(animationFrameId);
+        }
+      });
+      
+    })();
+  </script>
+</body>
+</html>
